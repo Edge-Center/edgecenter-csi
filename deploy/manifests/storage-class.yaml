@@ -1,0 +1,26 @@
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ec-csi-standard
+provisioner: csi.edgecenter.org
+volumeBindingMode: Immediate
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+parameters:
+  type: standard
+  snapshotRestoreEnabled: "true"
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ec-csi-hiiops
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: csi.edgecenter.org
+volumeBindingMode: Immediate
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+parameters:
+  type: ssd_hiiops
+  snapshotRestoreEnabled: "true"

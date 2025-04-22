@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ec-csi-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ec-csi-controller
+  template:
+    metadata:
+      labels:
+        app: ec-csi-controller
+    spec:
+      serviceAccountName: ec-csi-controller-sa
+      priorityClassName: system-cluster-critical
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - effect: NoSchedule # Make sure the pod can be scheduled on master kubelet.
+          operator: Exists
+      containers:
+        - name: csi-provisioner
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/csi-provisioner:v5.1.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --leader-election-namespace=kube-system
+            - --leader-election=true
+            - --extra-create-metadata=true
+            - --retry-interval-max=15s
+            - --default-fstype=ext4
+            - --timeout=30s
+            - --v=5
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: csi-attacher
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/csi-attacher:v4.7.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --leader-election-namespace=kube-system
+            - --leader-election=true
+            - --reconcile-sync=5m
+            - --timeout=2m
+            - --v=5
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: csi-snapshotter
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/csi-snapshotter:v8.1.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --leader-election-namespace=kube-system
+            - --leader-election=true
+            - --extra-create-metadata=true
+          volumeMounts:
+            - mountPath: /var/lib/csi/sockets/pluginproxy/
+              name: socket-dir
+
+        - name: snapshot-controller
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/snapshot-controller:v8.2.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --v=2
+            - --leader-election=true
+            - --leader-election-namespace=kube-system
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: ec-csi-resizer
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/csi-resizer:v1.12.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --v=2
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --timeout=3m
+            - --handle-volume-inuse-error=false
+            - --leader-election=true
+            - --leader-election-namespace=kube-system
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: ec-liveness-probe
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/livenessprobe:v2.14.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --probe-timeout=5s
+            - --v=2
+          volumeMounts:
+            - mountPath: /var/lib/csi/sockets/pluginproxy/
+              name: socket-dir
+
+        - name: ec-csi-plugin
+          image: ghcr.io/edge-center/edgecenter-csi:v1.2.0
+          env:
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ec-csi-plugin-config
+                  key: CLUSTER_ID
+          args:
+            - csi-plugin
+            - --endpoint=unix://csi/csi.sock
+            - --config=/etc/config/config.yaml
+            - --cluster=$(CLUSTER_ID)
+          imagePullPolicy: "IfNotPresent"
+          ports:
+            - containerPort: 9808
+              name: healthz
+              protocol: TCP
+          # The probe
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
+            periodSeconds: 60
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - mountPath: /etc/config
+              name: config
+              readOnly: true
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: config
+          secret:
+            secretName: ec-csi-plugin-config

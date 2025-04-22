@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ec-csi-driver
+description: A Helm chart for EdgeCenter CSI Driver
+version: 0.1.1
+appVersion: "1.0"

@@ -1,0 +1,139 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ec-csi-controller
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ec-csi-controller
+    component: csi-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ec-csi-controller
+  template:
+    metadata:
+      labels:
+        app: ec-csi-controller
+    spec:
+      serviceAccountName: ec-csi-controller-sa
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: csi-attacher
+          image: "{{ .Values.images.attacher.repository }}:{{ .Values.images.attacher.tag }}"
+          imagePullPolicy: "{{ .Values.images.attacher.pullPolicy }}"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --leader-election-namespace={{ .Values.global.namespace }}
+            - --leader-election=true
+            - --retry-interval-max=15s
+            - --timeout=2m
+            - --reconcile-sync=5m
+            - --v=5
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: csi-provisioner
+          image: "{{ .Values.images.provisioner.repository }}:{{ .Values.images.provisioner.tag }}"
+          imagePullPolicy: "{{ .Values.images.provisioner.pullPolicy }}"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --leader-election-namespace={{ .Values.global.namespace }}
+            - --leader-election=true
+            - --retry-interval-max=15s
+            - --timeout=30s
+            - --v=5
+            - --default-fstype=ext4
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: csi-snapshotter
+          image: "{{ .Values.images.snapshotter.repository }}:{{ .Values.images.snapshotter.tag }}"
+          imagePullPolicy: "{{ .Values.images.snapshotter.pullPolicy }}"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --timeout=3m
+            - --extra-create-metadata
+            - --leader-election=true
+          volumeMounts:
+            - mountPath: /var/lib/csi/sockets/pluginproxy/
+              name: socket-dir
+
+        - name: snapshot-controller
+          image: "{{ .Values.images.snapshotController.repository }}:{{ .Values.images.snapshotController.tag }}"
+          imagePullPolicy: "{{ .Values.images.snapshotController.pullPolicy }}"
+          args:
+            - --leader-election-namespace={{ .Values.global.namespace }}
+            - --leader-election=true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: csi-resizer
+          image: "{{ .Values.images.resizer.repository }}:{{ .Values.images.resizer.tag }}"
+          imagePullPolicy: "{{ .Values.images.resizer.pullPolicy }}"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --leader-election-namespace={{ .Values.global.namespace }}
+            - --leader-election=true
+            - --retry-interval-max=15s
+            - --timeout=30s
+            - --v=5
+            - --handle-volume-inuse-error=false
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/csi/sockets/pluginproxy/
+
+        - name: liveness-probe
+          image: "{{ .Values.images.nodeLivenessProbe.repository }}:{{ .Values.images.nodeLivenessProbe.tag }}"
+          imagePullPolicy: "{{ .Values.images.nodeLivenessProbe.pullPolicy }}"
+          args:
+            - --csi-address=/var/lib/csi/sockets/pluginproxy/csi.sock
+            #- --health-port=9809
+            - --v=5
+          volumeMounts:
+            - mountPath: /var/lib/csi/sockets/pluginproxy/
+              name: socket-dir
+
+        - name: ec-csi-plugin
+          image: "{{ .Values.images.ecCsiPlugin.repository }}:{{ .Values.images.ecCsiPlugin.tag }}"
+          imagePullPolicy: "{{ .Values.images.ecCsiPlugin.pullPolicy }}"
+          env:
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ec-csi-plugin-config
+                  key: CLUSTER_ID
+          args:
+            - csi-plugin
+            - --endpoint=unix://csi/csi.sock
+            - --config=/etc/config/config.yaml
+            - --cluster=$(CLUSTER_ID)
+          ports:
+            - containerPort: 9808
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
+            periodSeconds: 60
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: config
+          secret:
+            secretName: ec-csi-plugin-config

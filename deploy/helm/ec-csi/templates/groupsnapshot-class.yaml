@@ -1,0 +1,8 @@
+{{- if .Values.groupSnapshotClass.name }}
+apiVersion: groupsnapshot.storage.k8s.io/v1beta1
+kind: VolumeGroupSnapshotClass
+metadata:
+  name: {{ .Values.groupSnapshotClass.name }}
+driver: csi.edgecenter.org
+deletionPolicy: {{ .Values.groupSnapshotClass.deletionPolicy | default "Retain" }}
+{{- end }}
