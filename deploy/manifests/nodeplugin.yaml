@@ -1,0 +1,117 @@
+---
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: ec-csi-nodeplugin
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: ec-csi-nodeplugin
+  template:
+    metadata:
+      labels:
+        app: ec-csi-nodeplugin
+        role: ec-csi
+    spec:
+      priorityClassName: system-node-critical
+      serviceAccountName: ec-csi-node-sa
+      nodeSelector:
+        kubernetes.io/os: linux
+      hostNetwork: true
+      tolerations:
+        - operator: "Exists"
+      containers:
+        - name: node-driver-registrar
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/csi-node-driver-registrar:v2.8.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --v=2
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.edgecenter.org/csi.sock
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+        - name: liveness-probe
+          image: harbor.mkaas.edgecenter.online/docker/sig-storage/livenessprobe:v2.14.0
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --csi-address=/csi/csi.sock
+            - --probe-timeout=3s
+            - --v=2
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: ec-csi-plugin
+          image: harbor.mkaas.edgecenter.online/docker/ec-csi:v1.28.5
+          imagePullPolicy: "IfNotPresent"
+          env:
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ec-csi-plugin-config
+                  key: CLUSTER_ID
+          args:
+            - csi-plugin
+            - --endpoint=unix://csi/csi.sock
+            - --config=/etc/config/config.yaml
+            - --cluster=$(CLUSTER_ID)
+          ports:
+            - containerPort: 9808
+              name: healthz
+              protocol: TCP
+          # The probe
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: "Bidirectional"
+            - name: pods-probe-dir
+              mountPath: /dev
+              mountPropagation: "HostToContainer"
+            - mountPath: /etc/config
+              name: config
+              readOnly: true
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/csi.edgecenter.org
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: Directory
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: pods-probe-dir
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: config
+          secret:
+            secretName: ec-csi-plugin-config
