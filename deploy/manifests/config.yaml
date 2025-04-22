@@ -1,0 +1,17 @@
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ec-csi-plugin-config
+  namespace: kube-system
+data:
+  CLUSTER_ID: "__K8S_CLUSTER_ID__"
+---
+kind: Secret
+apiVersion: v1
+metadata:
+  name: ec-csi-plugin-config
+  namespace: kube-system
+type: Opaque
+data:
+  config.yaml: YXBpVXJsOiBfX0NMT1VEX0FQSV9VUkxfXwpwcm9qZWN0SUQ6IF9fUFJPSkVDVF9JRF9fCnJlZ2lvbklEOiBfX1JFR0lPTl9JRF9fCmFwaVRva2VuOiBfX0FQSV9UT0tFTl9f
