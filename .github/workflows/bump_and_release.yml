@@ -129,7 +129,6 @@ jobs:
     needs: build
 
     steps:
-      -
       - name: Set lowercase image name
         id: vars
         run: |
