@@ -135,6 +135,13 @@ jobs:
           image_name=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "image_name=$image_name" >> $GITHUB_OUTPUT
 
+      - name: Log into GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Trivy
         uses: aquasecurity/trivy-action@master
         with:
