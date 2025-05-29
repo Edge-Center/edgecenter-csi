@@ -13,5 +13,5 @@ LABEL name="ec-csi-plugin" \
       summary="Edgecenter CSI Plugin" \
       help="none"
 RUN apk add --no-cache rsync mount udev btrfs-progs e2fsprogs e2fsprogs-extra xfsprogs xfsprogs-extra ca-certificates curl blkid findmnt
-COPY --from=builder /build/csi-plugin /usr/local/bin/
-ENTRYPOINT ["csi-plugin"]
+COPY --from=builder /build/ec-csi-plugin /usr/local/bin/
+ENTRYPOINT ["ec-csi-plugin"]
