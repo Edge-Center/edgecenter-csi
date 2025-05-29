@@ -129,11 +129,18 @@ jobs:
     needs: build
 
     steps:
+      -
+      - name: Set lowercase image name
+        id: vars
+        run: |
+          image_name=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=$image_name" >> $GITHUB_OUTPUT
+
       - name: Install Trivy
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: image
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          image-ref: ${{ env.REGISTRY }}/${{ steps.vars.outputs.image_name }}:latest
           format: table
           exit-code: '1'
           ignore-unfixed: true
