@@ -133,7 +133,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: image
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.bump-version.outputs.new_tag }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           format: table
           exit-code: '1'
           ignore-unfixed: true
