@@ -100,7 +100,9 @@ jobs:
 
       - name: Set lowercase image name
         id: vars
-        run: echo "image_name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+        run: |
+          image_name=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=$image_name" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         id: build-and-push
