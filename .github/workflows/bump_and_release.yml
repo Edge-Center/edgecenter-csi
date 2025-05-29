@@ -13,6 +13,10 @@ on:
           - minor
           - major
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   bump-version:
     runs-on: ubuntu-latest
