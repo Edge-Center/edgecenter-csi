@@ -2,8 +2,10 @@ name: Build and Scan CSI Driver
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: ["**"]
+    tags: ["v*.*.*"]  # ← добавлено
+  pull_request:
+    branches: ["**"]
 
 env:
   REGISTRY: ghcr.io
