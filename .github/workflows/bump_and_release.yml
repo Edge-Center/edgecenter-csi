@@ -98,6 +98,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase image name
+        id: vars
+        run: echo "image_name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v5.0.0
@@ -105,8 +109,8 @@ jobs:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.bump-version.outputs.new_tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ steps.vars.outputs.image_name }}:${{ needs.bump-version.outputs.new_tag }}
+            ${{ env.REGISTRY }}/${{ steps.vars.outputs.image_name }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
