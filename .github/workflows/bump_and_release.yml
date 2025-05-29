@@ -68,7 +68,7 @@ jobs:
   build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: bump_version
+    needs: bump-version
     permissions:
       contents: read
       packages: write
