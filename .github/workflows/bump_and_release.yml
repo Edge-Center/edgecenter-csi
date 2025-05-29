@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -107,7 +108,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ needs.bump_version.outputs.new_tag }}
+          tags: ${{ needs.bump-version.outputs.new_tag }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -128,6 +129,6 @@ jobs:
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           scan-type: image
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.bump_version.outputs.new_tag }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.bump-version.outputs.new_tag }}
           format: table
           severity: CRITICAL,HIGH
