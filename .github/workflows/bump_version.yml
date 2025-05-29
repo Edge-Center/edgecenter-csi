@@ -1,4 +1,4 @@
-name: Bump Version and Create Release
+name: Bump and Release CSI Driver
 
 on:
   workflow_dispatch:
