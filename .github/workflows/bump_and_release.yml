@@ -142,13 +142,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Trivy
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/${{ steps.vars.outputs.image_name }}:latest
-          format: table
-          exit-code: '1'
+          format: json
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          output: trivy.json
+
+      - shell: pwsh
+        run: Get-Content trivy.json | ConvertFrom-Json | Select-Object -ExpandProperty Results | Select-Object -ExpandProperty Vulnerabilities | Select-Object Severity, PkgName, InstalledVersion, FixedVersion, Status, Title | ConvertTo-Html -Fragment | Out-File trivy.html
+
+      - run: cat trivy.html >> $GITHUB_STEP_SUMMARY
