@@ -99,7 +99,7 @@ spec:
               name: socket-dir
 
         - name: ec-csi-plugin
-          image: harbor.mkaas.edgecenter.online/docker/ec-csi:v1.28.5
+          image: ghcr.io/edge-center/edgecenter-csi:v1.2.0
           env:
             - name: CLUSTER_ID
               valueFrom:

@@ -1,10 +1,12 @@
-FROM golang:1.23-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /build
 ADD go.mod go.sum /build/
 RUN go mod download -x
 ADD cmd /build/cmd
 ADD pkg /build/pkg
-RUN CGO_ENABLED=0 GOOS=linux go build -o ./ec-csi-plugin ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o ./ec-csi-plugin ./cmd/main.go
 
 FROM alpine:3.18.4
 LABEL name="ec-csi-plugin" \

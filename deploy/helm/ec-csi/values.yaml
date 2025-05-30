@@ -50,8 +50,8 @@ images:
     pullPolicy: "IfNotPresent"
 
   ecCsiPlugin:
-    repository: "harbor.mkaas.edgecenter.online/docker/ec-csi"
-    tag: "v1.28.5"
+    repository: "ghcr.io/edge-center/edgecenter-csi"
+    tag: "latest"
     pullPolicy: "IfNotPresent"
 
 # Параметры StorageClass

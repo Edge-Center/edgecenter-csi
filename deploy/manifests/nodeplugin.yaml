@@ -52,7 +52,7 @@ spec:
               mountPath: /csi
 
         - name: ec-csi-plugin
-          image: harbor.mkaas.edgecenter.online/docker/ec-csi:v1.28.5
+          image: ghcr.io/edge-center/edgecenter-csi:latest
           imagePullPolicy: "IfNotPresent"
           env:
             - name: CLUSTER_ID
