@@ -1,8 +1,0 @@
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ec-csi-plugin-config
-  namespace: {{ .Values.global.namespace | quote }}
-data:
-  CLUSTER_ID: {{ .Values.global.clusterID | quote }}

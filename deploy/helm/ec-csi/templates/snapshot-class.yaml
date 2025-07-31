@@ -1,8 +1,0 @@
-{{- if .Values.snapshotClass.name }}
-apiVersion: snapshot.storage.k8s.io/v1
-kind: VolumeSnapshotClass
-metadata:
-  name: {{ .Values.snapshotClass.name }}
-driver: csi.edgecenter.org
-deletionPolicy: {{ .Values.snapshotClass.deletionPolicy | default "Retain" }}
-{{- end }}
