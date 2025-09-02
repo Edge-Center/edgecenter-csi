@@ -2,7 +2,7 @@ package node
 
 import "github.com/container-storage-interface/spec/lib/go/csi"
 
-const defaultMaxVolAttachLimit int64 = 7
+const defaultMaxVolAttachLimit int64 = 24
 
 var Capabilities = []*csi.NodeServiceCapability{
 	{
