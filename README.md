@@ -45,7 +45,7 @@ cd deploy/manifests
 for i in $(ls *.yaml);do kubectl apply -f $i;done
 ```
 
-#### 4. Test the S3 driver
+#### 4. Test the CSI driver
 
 1. Create a pvc using the new storage class:
 
