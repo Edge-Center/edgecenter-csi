@@ -155,7 +155,30 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
           output: trivy.json
 
-      - shell: pwsh
-        run: Get-Content trivy.json | ConvertFrom-Json | Select-Object -ExpandProperty Results | Select-Object -ExpandProperty Vulnerabilities | Select-Object Severity, PkgName, InstalledVersion, FixedVersion, Status, Title | ConvertTo-Html -Fragment | Out-File trivy.html
-
+      - name: Build HTML summary
+        shell: pwsh
+        run: |
+          $report = Get-Content trivy.json -Raw | ConvertFrom-Json
+  
+          $vulns = foreach ($result in $report.Results) {
+            if ($result.Vulnerabilities) {
+              foreach ($v in $result.Vulnerabilities) {
+                [PSCustomObject]@{
+                  Target           = $result.Target
+                  Severity         = $v.Severity
+                  PkgName          = $v.PkgName
+                  InstalledVersion = $v.InstalledVersion
+                  FixedVersion     = $v.FixedVersion
+                  Status           = $v.Status
+                  Title            = $v.Title
+                }
+              }
+            }
+          }
+  
+          if ($vulns) {
+            $vulns | ConvertTo-Html -Fragment | Out-File trivy.html
+          } else {
+            "<p>No vulnerabilities found.</p>" | Out-File trivy.html
+          }
       - run: cat trivy.html >> $GITHUB_STEP_SUMMARY
