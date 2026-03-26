@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	edgecloudV2 "github.com/Edge-Center/edgecentercloud-go/v2"
@@ -103,12 +104,24 @@ func (s *Service) ensureAttachmentVolume(ctx context.Context, volumeID, instance
 	return devicePath, nil
 }
 func (s *Service) ensureDetachmentVolume(ctx context.Context, volumeID, instanceID string) error {
-	exist, err := util.ResourceIsExist(ctx, s.cloud.Instances.Get, instanceID)
+	vol, resp, err := s.cloud.Volumes.Get(ctx, volumeID)
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		s.log.WithField("volume_id", volumeID).Info("volume does not exist, skipping detach")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if !exist {
-		return errors.New("not found")
+	if len(vol.Attachments) == 0 {
+		s.log.WithField("volume_id", volumeID).Info("volume is not attached, skipping detach")
+		return nil
+	}
+	attachedToInstance := slices.ContainsFunc(vol.Attachments, func(a edgecloudV2.Attachment) bool {
+		return a.ServerID == instanceID
+	})
+	if !attachedToInstance {
+		s.log.WithField("volume_id", volumeID).Info("volume is not attached to this instance, skipping detach")
+		return nil
 	}
 
 	_, _, err = s.cloud.Volumes.Detach(ctx, volumeID, &edgecloudV2.VolumeDetachRequest{InstanceID: instanceID})
