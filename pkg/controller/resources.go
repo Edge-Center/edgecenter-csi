@@ -103,6 +103,7 @@ func (s *Service) ensureAttachmentVolume(ctx context.Context, volumeID, instance
 	}
 	return devicePath, nil
 }
+
 func (s *Service) ensureDetachmentVolume(ctx context.Context, volumeID, instanceID string) error {
 	vol, resp, err := s.cloud.Volumes.Get(ctx, volumeID)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
@@ -124,7 +125,16 @@ func (s *Service) ensureDetachmentVolume(ctx context.Context, volumeID, instance
 		return nil
 	}
 
-	_, _, err = s.cloud.Volumes.Detach(ctx, volumeID, &edgecloudV2.VolumeDetachRequest{InstanceID: instanceID})
+	_, resp, err = s.cloud.Volumes.Detach(ctx, volumeID, &edgecloudV2.VolumeDetachRequest{InstanceID: instanceID})
+
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		s.log.WithFields(logrus.Fields{
+			"volume_id":   volumeID,
+			"instance_id": instanceID,
+		}).Info("volume does not exist during detach, skipping detach")
+		return nil
+	}
+
 	if err != nil {
 		return err
 	}
