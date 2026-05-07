@@ -3,7 +3,7 @@ module ec-csi-plugin
 go 1.24.0
 
 require (
-	github.com/Edge-Center/edgecentercloud-go/v2 v2.1.4
+	github.com/Edge-Center/edgecentercloud-go/v2 v2.5.6
 	github.com/container-storage-interface/spec v1.11.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sirupsen/logrus v1.9.3

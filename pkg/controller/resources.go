@@ -54,33 +54,45 @@ func (s *Service) ensureAttachmentVolume(ctx context.Context, volumeID, instance
 	if err != nil {
 		return "", err
 	}
+
 	if !exist {
-		return "", errors.New("not found")
+		return "", errors.New("volume not found")
 	}
 
 	exist, err = util.ResourceIsExist(ctx, s.cloud.Instances.Get, instanceID)
 	if err != nil {
 		return "", err
 	}
+
 	if !exist {
-		return "", errors.New("not found")
+		return "", errors.New("instance not found")
 	}
 
 	vol, _, err := s.cloud.Volumes.Get(ctx, volumeID)
 	if err != nil {
 		return "", err
 	}
-	if len(vol.Attachments) != 0 {
-		if vol.Attachments[0].ServerID == instanceID {
-			return "", nil
+
+	if len(vol.Attachments) > 0 {
+		attachment := vol.Attachments[0]
+
+		if attachment.ServerID == instanceID {
+			return attachment.Device, nil
 		}
-		return "", errors.New("volume attach to different node")
+
+		return "", fmt.Errorf("volume %q already attached to different node: %q",
+			volumeID,
+			attachment.ServerID,
+		)
 	}
 
-	_, _, err = s.cloud.Volumes.Attach(ctx, volumeID, &edgecloudV2.VolumeAttachRequest{InstanceID: instanceID})
+	_, _, err = s.cloud.Volumes.Attach(ctx, volumeID, &edgecloudV2.VolumeAttachRequest{
+		InstanceID: instanceID,
+	})
 	if err != nil {
 		return "", err
 	}
+
 	if err = util.WaitVolumeAttachedToInstance(ctx, s.cloud, volumeID, instanceID, nil); err != nil {
 		return "", err
 	}
@@ -89,20 +101,30 @@ func (s *Service) ensureAttachmentVolume(ctx context.Context, volumeID, instance
 	if err != nil {
 		return "", err
 	}
+
 	if vol.Status != "in-use" {
-		return "", fmt.Errorf("cannot get device path of volume %s, its status is %s ", vol.Name, vol.Status)
+		return "", fmt.Errorf("cannot get device path of volume %s, its status is %s",
+			vol.Name,
+			vol.Status,
+		)
 	}
 
-	var devicePath string
-	if len(vol.Attachments) > 0 && vol.Attachments[0].ServerID != "" {
-		if instanceID == vol.Attachments[0].ServerID {
-			devicePath = vol.Attachments[0].Device
+	if len(vol.Attachments) > 0 {
+		attachment := vol.Attachments[0]
+
+		if attachment.ServerID == instanceID {
+			return attachment.Device, nil
 		}
-		return "", fmt.Errorf("[ControllerPublishVolume] disk %q is attached to a different compute: %q, should be detached before proceeding",
-			vol.ID, vol.Attachments[0].ServerID)
+
+		return "", fmt.Errorf("[ControllerPublishVolume] disk %q is attached to a different compute: %q",
+			vol.ID,
+			attachment.ServerID,
+		)
 	}
-	return devicePath, nil
+
+	return "", fmt.Errorf("volume %q attached but no attachment info returned", volumeID)
 }
+
 func (s *Service) ensureDetachmentVolume(ctx context.Context, volumeID, instanceID string) error {
 	vol, resp, err := s.cloud.Volumes.Get(ctx, volumeID)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {

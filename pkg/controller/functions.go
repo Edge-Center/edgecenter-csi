@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	edgecloudV2 "github.com/Edge-Center/edgecentercloud-go/v2"
 	"github.com/Edge-Center/edgecentercloud-go/v2/util"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+const deleteVolumeTimeout = 25 * time.Second
 
 // CreateVolume creates a new volume from the given request. The function is idempotent.
 func (s *Service) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -118,7 +121,7 @@ func (s *Service) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 	})
 	log.Infof("%s is called", methodName)
 
-	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Volumes, req.VolumeId); err != nil {
+	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Volumes, req.VolumeId, deleteVolumeTimeout); err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: volume was not deleted with error %v", methodName, err)
 	}
 	log.Info("volume is deleted")

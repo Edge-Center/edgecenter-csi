@@ -10,7 +10,7 @@ BINARY := bin/ec-csi-plugin
 
 build:
 	GOOS=$(GOOS) GOARCH=$(ARCH) CGO_ENABLED=0 \
-	go build -o $(BINARY) ./cmd/ec-csi-plugin
+	go build -o $(BINARY) ./cmd/main.go
 
 image-build: build
 	docker build \
