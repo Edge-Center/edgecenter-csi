@@ -31,7 +31,7 @@ spec:
             - --extra-create-metadata=true
             - --retry-interval-max=15s
             - --default-fstype=ext4
-            - --timeout=30s
+            - --timeout=2m
             - --v=5
           volumeMounts:
             - name: socket-dir
@@ -58,6 +58,7 @@ spec:
             - --leader-election-namespace=kube-system
             - --leader-election=true
             - --extra-create-metadata=true
+            - --timeout=3m
           volumeMounts:
             - mountPath: /var/lib/csi/sockets/pluginproxy/
               name: socket-dir

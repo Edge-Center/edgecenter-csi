@@ -397,6 +397,9 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req *csi.Controll
 
 	devicePath, err := s.ensureAttachmentVolume(ctx, req.VolumeId, req.NodeId)
 	if err != nil {
+		if status.Code(err) != codes.Unknown {
+			return nil, err
+		}
 		return nil, status.Errorf(codes.Internal, "%s: cannot attach volume: %s", methodName, err)
 	}
 	log.Info("volume is attached")
@@ -420,7 +423,7 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req *csi.Contro
 	})
 	log.Infof("%s is called", methodName)
 	if err := s.ensureDetachmentVolume(ctx, req.VolumeId, req.NodeId); err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: cannot detach volume: %w", methodName, err)
+		return nil, status.Errorf(codes.Internal, "%s: cannot detach volume: %s", methodName, err.Error())
 	}
 	log.Info("volume was detached")
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
@@ -452,7 +455,7 @@ func (s *Service) ValidateVolumeCapabilities(ctx context.Context, req *csi.Valid
 
 	exist, err := util.ResourceIsExist(ctx, s.cloud.Volumes.Get, req.VolumeId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: get volume failed with error %v", err)
+		return nil, status.Errorf(codes.Internal, "%s: get volume failed with error %s", methodName, err.Error())
 	}
 	if !exist {
 		return nil, status.Errorf(codes.NotFound, "%s: volume %s not found", methodName, req.VolumeId)
