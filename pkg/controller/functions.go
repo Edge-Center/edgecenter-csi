@@ -110,20 +110,62 @@ func (s *Service) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 
 // DeleteVolume deletes the given volume. The function is idempotent.
 func (s *Service) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	methodName := "DeleteVolume"
-	if req.VolumeId == "" {
+	const methodName = "DeleteVolume"
+
+	volumeID := req.GetVolumeId()
+	if volumeID == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "%s: VolumeID must be provided", methodName)
 	}
 
 	log := s.log.WithFields(logrus.Fields{
-		"volume_id": req.VolumeId,
+		"volume_id": volumeID,
 		"method":    methodName,
 	})
 	log.Infof("%s is called", methodName)
 
-	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Volumes, req.VolumeId, deleteVolumeTimeout); err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: volume was not deleted with error %v", methodName, err)
+	_, resp, err := s.cloud.Volumes.Get(ctx, volumeID)
+
+	if err != nil {
+		if util.IsNotFoundErr(resp) {
+			log.Info("volume does not exist, skipping deletion")
+			return &csi.DeleteVolumeResponse{}, nil
+		}
+
+		return nil, status.Errorf(codes.Internal, "%s: failed to get volume %q: %v", methodName, volumeID, err)
 	}
+
+	snapshots, _, err := s.cloud.Snapshots.List(ctx, &edgecloudV2.SnapshotListOptions{VolumeID: volumeID})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s: failed to list snapshots for volume %q: %v", methodName,
+			volumeID,
+			err,
+		)
+	}
+
+	if len(snapshots) > 0 {
+		snapshotIDs := make([]string, 0, len(snapshots))
+		for _, snapshot := range snapshots {
+			snapshotIDs = append(snapshotIDs, snapshot.ID)
+		}
+
+		log.WithField("snapshot_ids", snapshotIDs).
+			Warn("volume deletion is blocked by existing snapshots")
+
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"%s: volume %q cannot be deleted because it has existing snapshots %v; "+
+				"delete the snapshots first",
+			methodName,
+			volumeID,
+			snapshotIDs,
+		)
+	}
+
+	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Volumes, volumeID, deleteVolumeTimeout); err != nil {
+		return nil, status.Errorf(codes.Internal, "%s: volume %q was not deleted: %v", methodName, volumeID,
+			err,
+		)
+	}
+
 	log.Info("volume is deleted")
 	return &csi.DeleteVolumeResponse{}, nil
 }
