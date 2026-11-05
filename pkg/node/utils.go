@@ -8,7 +8,7 @@ import (
 
 // findAbsoluteDeviceByIDPath follows the /dev/disk/by-id symlink to find the absolute path of a device
 func (s *Service) findAbsoluteDeviceByIDPath(volumeID string) (string, error) {
-	path, err := s.mounter.DevicePathByVolumeID(volumeID)
+	path, err := s.devicePathByHandle(volumeID)
 	if err != nil {
 		return "", fmt.Errorf("cannot find device path: %w", err)
 	}

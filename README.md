@@ -77,3 +77,63 @@ This project can be built like any other go application.
 go get -u github.com/Edge-Center/edgecenter-csi
 ```
 
+
+## Multi-region block volumes
+
+Keep the existing primary project and region in the CSI Secret's
+`config.yaml`. Add the other regions under `regions`, and use the same
+configuration and image for the controller and node plugin. For example:
+
+```yaml
+apiUrl: https://api.edgecenter.ru/cloud
+apiToken: <existing-token>
+projectID: 341372
+regionID: 112
+regions:
+  dt:
+    regionID: <actual-DT-region-ID>
+    # projectID: <DT-project-ID-if-different>
+```
+
+The token must be able to look up instances and manage storage in every
+configured scope. Additional regions inherit the primary project ID unless
+overridden. Keep the primary project and region fixed while legacy PVs exist.
+
+The node plugin resolves the VM UUID through the configured cloud API scopes.
+It publishes the CSI topology key `topology.csi.edgecenter.org/region` with
+value `<projectID>-<regionID>`. A lookup error blocks registration for that
+node. The driver's topology comes from the cloud API. Workload selectors
+such as `edgecenter.com/node-region=dt` still control scheduling independently.
+
+Use a new StorageClass with `volumeBindingMode: WaitForFirstConsumer`. Copy
+the disk type and other relevant settings from your current class. For example:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: edgecenter-regional
+provisioner: csi.edgecenter.org
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+```
+
+With a supported external-provisioner, enable `--strict-topology` so a
+delayed-binding request is restricted to the scheduler-selected node topology.
+For a DT-only StorageClass, also add `allowedTopologies` with the CSI topology
+key and the actual DT project-region value. For a DT workload, select DT nodes
+in its pod spec and reference the new class in its PVC.
+
+New PVs advertise only the scope where their disk exists. Legacy UUID handles
+continue to resolve to the primary scope. An existing PV provisioned without
+topology keeps its old affinity. Restrict workloads using those primary-region
+PVCs to primary-region nodes during the rollout. Snapshots can restore into
+their own scope. Block disks cannot move between scopes or provide RWX.
+
+Before enabling mixed-region provisioning, update the CSI node plugin on all
+eligible nodes and verify that their topology labels are present, then update
+the controller and create the new StorageClass. During staging validation,
+create a PVC and pod in each region, verify the PV node affinity and cloud
+disk location, then exercise attach, resize and deletion. Keep every configured
+scope available until all of its PVs and snapshots are removed or migrated.
+An older driver cannot operate on regional handles.

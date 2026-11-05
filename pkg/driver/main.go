@@ -6,8 +6,8 @@ import (
 	"ec-csi-plugin/pkg/metadata"
 	"ec-csi-plugin/pkg/mounter"
 	"ec-csi-plugin/pkg/node"
+	"ec-csi-plugin/pkg/region"
 	"ec-csi-plugin/pkg/version"
-	edgecloudV2 "github.com/Edge-Center/edgecentercloud-go/v2"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -19,14 +19,14 @@ import (
 
 const driverName = "csi.edgecenter.org"
 
-func New(cloud *edgecloudV2.Client, clusterID string, validateAttachments bool) NonBlockingGRPCServer {
+func New(scopes *region.Set, clusterID string, validateAttachments bool) NonBlockingGRPCServer {
 	d := &Driver{}
 
 	d.log = logrus.New().WithFields(logrus.Fields{})
 
-	d.identityServer = identity.New(driverName, version.Version)
-	d.controllerServer = controller.New(cloud, clusterID, d.log)
-	d.nodeServer = node.New(mounter.New(d.log), metadata.New(), validateAttachments, d.log)
+	d.identityServer = identity.New(driverName, version.Version, scopes.Enabled())
+	d.controllerServer = controller.New(scopes, clusterID, d.log)
+	d.nodeServer = node.New(mounter.New(d.log), metadata.New(), validateAttachments, scopes, d.log)
 
 	return d
 }

@@ -5,8 +5,8 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 )
 
-func New(name, version string) csi.IdentityServer {
-	return &Service{Name: name, Version: version}
+func New(name, version string, topology bool) csi.IdentityServer {
+	return &Service{Name: name, Version: version, Topology: topology}
 }
 
 // GetPluginInfo returns metadata of the plugin
@@ -19,7 +19,7 @@ func (s *Service) GetPluginInfo(_ context.Context, _ *csi.GetPluginInfoRequest) 
 
 // GetPluginCapabilities returns available capabilities of the plugin
 func (s *Service) GetPluginCapabilities(_ context.Context, _ *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
-	return &csi.GetPluginCapabilitiesResponse{
+	resp := &csi.GetPluginCapabilitiesResponse{
 		Capabilities: []*csi.PluginCapability{
 			{
 				Type: &csi.PluginCapability_Service_{
@@ -36,7 +36,15 @@ func (s *Service) GetPluginCapabilities(_ context.Context, _ *csi.GetPluginCapab
 				},
 			},
 		},
-	}, nil
+	}
+	if s.Topology {
+		resp.Capabilities = append(resp.Capabilities, &csi.PluginCapability{
+			Type: &csi.PluginCapability_Service_{Service: &csi.PluginCapability_Service{
+				Type: csi.PluginCapability_Service_VOLUME_ACCESSIBILITY_CONSTRAINTS,
+			}},
+		})
+	}
+	return resp, nil
 }
 
 // Probe returns the health and readiness of the plugin
