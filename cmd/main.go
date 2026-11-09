@@ -2,6 +2,7 @@ package main
 
 import (
 	"ec-csi-plugin/pkg/driver"
+	"ec-csi-plugin/pkg/region"
 	"ec-csi-plugin/pkg/version"
 	"fmt"
 	edgecloudV2 "github.com/Edge-Center/edgecentercloud-go/v2"
@@ -17,7 +18,10 @@ var (
 	endpoint     string
 	pathToConfig string
 	cluster      string
-	config       edgecloudV2.CloudConfig
+	config       struct {
+		edgecloudV2.CloudConfig `mapstructure:",squash"`
+		Regions                 map[string]region.Config `mapstructure:"regions"`
+	}
 )
 
 func init() {
@@ -43,18 +47,13 @@ var rootCmd = &cobra.Command{
 	Use:   "Edgecenter",
 	Short: "CSI based Edgecenter driver",
 	Run: func(cmd *cobra.Command, args []string) {
-		cloud, err := edgecloudV2.NewWithRetries(nil,
-			edgecloudV2.SetAPIKey(config.APIToken),
-			edgecloudV2.SetBaseURL(config.APIUrl),
-			edgecloudV2.SetProject(config.ProjectID),
-			edgecloudV2.SetRegion(config.RegionID),
-		)
+		scopes, err := region.New(config.CloudConfig, config.Regions)
 		if err != nil {
 			log.Fatalf("failed to create cloud client: %v", err)
 			return
 		}
 		log.Printf("create new driver")
-		d := driver.New(cloud, cluster, true)
+		d := driver.New(scopes, cluster, true)
 		d.Start(endpoint)
 		d.Wait()
 	},

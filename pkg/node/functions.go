@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"ec-csi-plugin/pkg/region"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -42,7 +43,7 @@ func (s *Service) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeReq
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	source, err := s.mounter.DevicePathByVolumeID(req.VolumeId)
+	source, err := s.devicePathByHandle(req.VolumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: failed to find device path: %s", methodName, err)
 	}
@@ -417,7 +418,7 @@ func (s *Service) NodeExpandVolume(_ context.Context, req *csi.NodeExpandVolumeR
 		return nil, status.Errorf(codes.NotFound, "%s: volume path %q is not mounted", methodName, volumePath)
 	}
 
-	devicePath, err := s.mounter.DevicePathByVolumeID(volumeID)
+	devicePath, err := s.devicePathByHandle(volumeID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: unable to get device path for %q: %s", methodName, volumePath, err)
 	}
@@ -445,25 +446,28 @@ func (s *Service) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilit
 // NodeGetInfo returns the supported capabilities of the node server. This
 // should eventually return the droplet ID if possible. This is used so the CO
 // knows where to place the workload. The result of this function will be used by the CO in ControllerPublishVolume.
-func (s *Service) NodeGetInfo(_ context.Context, _ *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+func (s *Service) NodeGetInfo(ctx context.Context, _ *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	s.log.WithField("method", "nodeGetInfo").Info("NodeGetInfo is called")
 	nodeID, err := s.metadata.InstanceID()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "NodeGetInfo: unable to retrieve instance id of node: %v", err)
 	}
 
-	//zone, err := s.metadata.AZ()
-	//if err != nil {
-	//	return nil, status.Error(codes.Internal, fmt.Sprintf("[NodeGetInfo] Unable to retrieve availability zone of node %v", err))
-	//}
-	//if err != nil || zone == "" {
-	//	zone = defaultZone
-	//}
-	//topology := &csi.Topology{Segments: map[string]string{topologyKey: zone}}
+	response := &csi.NodeGetInfoResponse{NodeId: nodeID, MaxVolumesPerNode: defaultMaxVolAttachLimit}
+	if s.regions.Enabled() {
+		scope, err := s.regions.ForNode(ctx, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		response.AccessibleTopology = scope.Topology()
+	}
+	return response, nil
+}
 
-	return &csi.NodeGetInfoResponse{
-		NodeId: nodeID,
-		//AccessibleTopology: topology,
-		MaxVolumesPerNode: defaultMaxVolAttachLimit,
-	}, nil
+func (s *Service) devicePathByHandle(handle string) (string, error) {
+	_, id, err := region.SplitHandle(handle)
+	if err != nil {
+		return "", err
+	}
+	return s.mounter.DevicePathByVolumeID(id)
 }

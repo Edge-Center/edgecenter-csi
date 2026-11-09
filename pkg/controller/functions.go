@@ -31,7 +31,12 @@ func (s *Service) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 		return nil, status.Errorf(codes.InvalidArgument, "%s: VolumeCapabilities cannot be satisfied: %s", methodName, strings.Join(violations, "; "))
 	}
 
-	// Volume Size - Default is 1 GiB
+	if _, active := s.creating.LoadOrStore(req.Name, struct{}{}); active {
+		return nil, status.Error(codes.Aborted, "volume creation with this name is already in progress")
+	}
+	defer s.creating.Delete(req.Name)
+
+	// Compute the requested volume size.
 	sizeBytes := defaultVolumeSizeInBytes
 	if req.GetCapacityRange() != nil {
 		sizeBytes = req.GetCapacityRange().GetRequiredBytes()
@@ -46,37 +51,45 @@ func (s *Service) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 	})
 	log.Infof("%s is called", methodName)
 
-	// Verify a volume with the provided name doesn't already exist for this tenant
-	volumes, err := util.VolumesListByName(ctx, s.cloud, req.Name)
-	if err != nil && !errors.Is(err, util.ErrVolumesNotFound) {
-		return nil, status.Errorf(codes.Internal, "%s: failed to get volumes by name: %s", methodName, err)
+	// The scheduler selects a scope before the driver provisions the volume.
+	scope, err := s.regions.ForTopology(req.GetAccessibilityRequirements())
+	if err != nil {
+		return nil, err
+	}
+	s = s.inScope(scope)
+	content := req.GetVolumeContentSource()
+	if content.GetVolume() != nil {
+		return nil, status.Error(codes.Unimplemented, "cloning from a volume is not supported")
+	}
+	var snapshotID string
+	if snapshot := content.GetSnapshot(); snapshot != nil {
+		if snapshot.GetSnapshotId() == "" {
+			return nil, status.Error(codes.InvalidArgument, "snapshot ID is required")
+		}
+		source, id, err := s.forHandle(snapshot.GetSnapshotId())
+		if err != nil {
+			return nil, err
+		}
+		if source.scope.Config != scope.Config {
+			return nil, status.Error(codes.FailedPrecondition, "snapshot and target volume must be in the same CSI region")
+		}
+		snapshotID = id
+	}
+	volumes, err := s.findVolume(ctx, req.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(volumes) == 1 {
 		if sizeGB != volumes[0].Size {
 			return nil, status.Errorf(codes.AlreadyExists, "%s: volume already exists with same name and different capacity", methodName)
 		}
-		return prepareCreateResponse(&volumes[0], true, req.GetAccessibilityRequirements()), nil
+		return s.createResponse(&volumes[0], req), nil
 	} else if len(volumes) > 1 {
 		return nil, status.Errorf(codes.Internal, "%s: multiple volumes reported with same name", methodName)
 	}
 
-	content := req.GetVolumeContentSource()
-	var sourceVolID string
-	if content != nil && content.GetVolume() != nil {
-		sourceVolID = content.GetVolume().GetVolumeId()
-		exist, err := util.ResourceIsExist(ctx, s.cloud.Volumes.Get, sourceVolID)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "%s: failed to retrieve the source volume %s: %v", methodName, sourceVolID, err)
-		}
-		if !exist {
-			return nil, status.Errorf(codes.NotFound, "%s: source Volume %s not found", methodName, sourceVolID)
-		}
-	}
-
-	var snapshotID string
-	if content != nil && content.GetSnapshot() != nil {
-		snapshotID = content.GetSnapshot().GetSnapshotId()
+	if snapshotID != "" {
 		exist, err := util.ResourceIsExist(ctx, s.cloud.Snapshots.Get, snapshotID)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "%s: failed to retrieve the snapshot %s: %v", methodName, snapshotID, err)
@@ -105,7 +118,7 @@ func (s *Service) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 
 	s.log.Infof("%s SnapshotIDs", volume.SnapshotIDs)
 
-	return prepareCreateResponse(volume, true, req.AccessibilityRequirements), nil
+	return s.createResponse(volume, req), nil
 }
 
 // DeleteVolume deletes the given volume. The function is idempotent.
@@ -115,6 +128,10 @@ func (s *Service) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 	volumeID := req.GetVolumeId()
 	if volumeID == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "%s: VolumeID must be provided", methodName)
+	}
+	s, volumeID, err := s.forHandle(volumeID)
+	if err != nil {
+		return nil, err
 	}
 
 	log := s.log.WithFields(logrus.Fields{
@@ -172,6 +189,18 @@ func (s *Service) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 
 // ListVolumes returns a list of all requested volumes
 func (s *Service) ListVolumes(ctx context.Context, _ *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
+	response := &csi.ListVolumesResponse{}
+	for _, scope := range s.regions.Scopes {
+		scoped, err := s.inScope(scope).listVolumes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		response.Entries = append(response.Entries, scoped.Entries...)
+	}
+	return response, nil
+}
+
+func (s *Service) listVolumes(ctx context.Context) (*csi.ListVolumesResponse, error) {
 	methodName := "ListVolumes"
 	volumes, _, err := s.cloud.Volumes.List(ctx, nil)
 	if err != nil {
@@ -190,7 +219,7 @@ func (s *Service) ListVolumes(ctx context.Context, _ *csi.ListVolumesRequest) (*
 		}
 		entry := csi.ListVolumesResponse_Entry{
 			Volume: &csi.Volume{
-				VolumeId:      v.ID,
+				VolumeId:      s.scope.Handle(v.ID),
 				CapacityBytes: int64(v.Size * giB),
 			},
 			Status: volumeStatus,
@@ -212,6 +241,11 @@ func (s *Service) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotReq
 		return nil, status.Errorf(codes.InvalidArgument, "%s: SourceVolumeID must be provided", methodName)
 	}
 
+	s, volumeID, err := s.forHandle(req.GetSourceVolumeId())
+	if err != nil {
+		return nil, err
+	}
+
 	log := s.log.WithFields(logrus.Fields{
 		"req_name":             req.GetName(),
 		"req_source_volume_id": req.GetSourceVolumeId(),
@@ -223,7 +257,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotReq
 	log.Infof("%s volumesource", req.SourceVolumeId)
 
 	// Verify a snapshot with the provided name doesn't already exist for this tenant
-	snaps, err := util.SnapshotsListByNameAndVolumeID(ctx, s.cloud, req.Name, req.SourceVolumeId)
+	snaps, err := util.SnapshotsListByNameAndVolumeID(ctx, s.cloud, req.Name, volumeID)
 
 	if err != nil && !errors.Is(err, util.ErrSnapshotsNotFound) {
 		return nil, status.Errorf(codes.Internal, "%s: failed to get snapshots: %s", methodName, err.Error())
@@ -232,7 +266,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotReq
 	var snap *edgecloudV2.Snapshot
 	if len(snaps) == 1 {
 		snap = &snaps[0]
-		if snap.VolumeID != req.SourceVolumeId {
+		if snap.VolumeID != volumeID {
 			return nil, status.Errorf(codes.AlreadyExists, "%s: snapshot with given name already exists, with different sourceVolumeID", methodName)
 		}
 		log.Info("found existing snapshot")
@@ -243,7 +277,9 @@ func (s *Service) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotReq
 
 	md := snapshotMetadata(s.clusterID, req)
 
-	snap, err = s.ensureSnapshot(ctx, req.SourceVolumeId, req.Name, md)
+	if snap == nil {
+		snap, err = s.ensureSnapshot(ctx, volumeID, req.Name, md)
+	}
 
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: failed to ensure snapshot volume: %s", methodName, err)
@@ -265,9 +301,9 @@ func (s *Service) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotReq
 	log.Info("snapshot is created")
 	return &csi.CreateSnapshotResponse{
 		Snapshot: &csi.Snapshot{
-			SnapshotId:     snap.ID,
+			SnapshotId:     s.scope.Handle(snap.ID),
 			SizeBytes:      int64(snap.Size * 1024 * 1024 * 1024),
-			SourceVolumeId: snap.VolumeID,
+			SourceVolumeId: req.GetSourceVolumeId(),
 			CreationTime:   ctime,
 			ReadyToUse:     true,
 		},
@@ -286,7 +322,11 @@ func (s *Service) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotReq
 	if req.SnapshotId == "" {
 		return nil, status.Error(codes.InvalidArgument, "DeleteSnapshot: SnapshotID must be provided")
 	}
-	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Snapshots, req.SnapshotId); err != nil {
+	s, snapshotID, err := s.forHandle(req.SnapshotId)
+	if err != nil {
+		return nil, err
+	}
+	if err := util.DeleteResourceIfExist(ctx, s.cloud, s.cloud.Snapshots, snapshotID); err != nil {
 		return nil, status.Errorf(codes.Internal, "DeleteSnapshot: snapshots was not deleted with error %v", err)
 	}
 
@@ -297,23 +337,54 @@ func (s *Service) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotReq
 // ListSnapshots returns the information about all snapshots on the storage system within the given parameters regardless of how they were created.
 // ListSnapshots should not list a snapshot that is being created but has not been cut successfully yet.
 func (s *Service) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
-	methodName := "ListSnapshots"
-	log := s.log.WithFields(logrus.Fields{
-		"snapshot_id":        req.SnapshotId,
-		"source_volume_id":   req.SourceVolumeId,
-		"max_entries":        req.MaxEntries,
-		"req_starting_token": req.StartingToken,
-		"method":             methodName,
-	})
-	log.Infof("%s is called", methodName)
+	snapshotID, volumeID := req.GetSnapshotId(), req.GetSourceVolumeId()
+	if snapshotID != "" || volumeID != "" {
+		var snapshotScope, volumeScope *Service
+		var err error
+		if snapshotID != "" {
+			snapshotScope, snapshotID, err = s.forHandle(snapshotID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if volumeID != "" {
+			volumeScope, volumeID, err = s.forHandle(volumeID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if snapshotScope != nil {
+			if volumeScope != nil && snapshotScope.scope.Config != volumeScope.scope.Config {
+				return &csi.ListSnapshotsResponse{}, nil
+			}
+			return snapshotScope.listSnapshots(ctx, snapshotID, volumeID)
+		}
+		return volumeScope.listSnapshots(ctx, "", volumeID)
+	}
+	response := &csi.ListSnapshotsResponse{}
+	for _, scope := range s.regions.Scopes {
+		scoped, err := s.inScope(scope).listSnapshots(ctx, "", "")
+		if err != nil {
+			return nil, err
+		}
+		response.Entries = append(response.Entries, scoped.Entries...)
+	}
+	return response, nil
+}
 
-	snapshotID := req.GetSnapshotId()
+func (s *Service) listSnapshots(ctx context.Context, snapshotID, volumeID string) (*csi.ListSnapshotsResponse, error) {
+	methodName := "ListSnapshots"
+	log := s.log.WithField("method", methodName)
+
 	if len(snapshotID) != 0 {
 		snapshot, resp, err := s.cloud.Snapshots.Get(ctx, snapshotID)
 		if err != nil {
+			if util.IsNotFoundErr(resp) {
+				return &csi.ListSnapshotsResponse{}, nil
+			}
 			return nil, status.Errorf(codes.Internal, "%s: failed to get snapshot %s : %v", methodName, snapshotID, err)
 		}
-		if resp.StatusCode == http.StatusNotFound {
+		if volumeID != "" && snapshot.VolumeID != volumeID {
 			return &csi.ListSnapshotsResponse{}, nil
 		}
 
@@ -326,8 +397,8 @@ func (s *Service) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsReque
 		entry := &csi.ListSnapshotsResponse_Entry{
 			Snapshot: &csi.Snapshot{
 				SizeBytes:      int64(snapshot.Size * 1024 * 1024 * 1024),
-				SnapshotId:     snapshot.ID,
-				SourceVolumeId: snapshot.VolumeID,
+				SnapshotId:     s.scope.Handle(snapshot.ID),
+				SourceVolumeId: s.scope.Handle(snapshot.VolumeID),
 				CreationTime:   ctime,
 				ReadyToUse:     true,
 			},
@@ -335,7 +406,7 @@ func (s *Service) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsReque
 		return &csi.ListSnapshotsResponse{Entries: []*csi.ListSnapshotsResponse_Entry{entry}}, ctime.CheckValid()
 	}
 
-	snaps, err := util.SnapshotsListByStatusAndVolumeID(ctx, s.cloud, "available", req.GetSourceVolumeId())
+	snaps, err := util.SnapshotsListByStatusAndVolumeID(ctx, s.cloud, "available", volumeID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: failed with error %v", methodName, err)
 	}
@@ -355,8 +426,8 @@ func (s *Service) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsReque
 		entry := csi.ListSnapshotsResponse_Entry{
 			Snapshot: &csi.Snapshot{
 				SizeBytes:      int64(v.Size * 1024 * 1024 * 1024),
-				SnapshotId:     v.ID,
-				SourceVolumeId: v.VolumeID,
+				SnapshotId:     s.scope.Handle(v.ID),
+				SourceVolumeId: s.scope.Handle(v.VolumeID),
 				CreationTime:   ctime,
 				ReadyToUse:     true,
 			},
@@ -388,6 +459,11 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req *csi.Controll
 		return nil, status.Errorf(codes.AlreadyExists, "%s: read only Volumes are not supported", methodName)
 	}
 
+	s, volumeID, err := s.forHandle(req.VolumeId)
+	if err != nil {
+		return nil, err
+	}
+
 	log := s.log.WithFields(logrus.Fields{
 		"volume_id": req.VolumeId,
 		"node_id":   req.NodeId,
@@ -395,7 +471,7 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req *csi.Controll
 	})
 	log.Infof("%s is called", methodName)
 
-	devicePath, err := s.ensureAttachmentVolume(ctx, req.VolumeId, req.NodeId)
+	devicePath, err := s.ensureAttachmentVolume(ctx, volumeID, req.NodeId)
 	if err != nil {
 		if status.Code(err) != codes.Unknown {
 			return nil, err
@@ -416,13 +492,18 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req *csi.Contro
 		return nil, status.Errorf(codes.InvalidArgument, "%s: NodeID must be provided", methodName)
 	}
 
+	s, volumeID, err := s.forHandle(req.VolumeId)
+	if err != nil {
+		return nil, err
+	}
+
 	log := s.log.WithFields(logrus.Fields{
 		"volume_id": req.VolumeId,
 		"node_id":   req.NodeId,
 		"method":    methodName,
 	})
 	log.Infof("%s is called", methodName)
-	if err := s.ensureDetachmentVolume(ctx, req.VolumeId, req.NodeId); err != nil {
+	if err := s.ensureDetachmentVolume(ctx, volumeID, req.NodeId); err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: cannot detach volume: %s", methodName, err.Error())
 	}
 	log.Info("volume was detached")
@@ -445,6 +526,11 @@ func (s *Service) ValidateVolumeCapabilities(ctx context.Context, req *csi.Valid
 		return nil, status.Errorf(codes.InvalidArgument, "%s: VolumeCapabilities must be provided", methodName)
 	}
 
+	s, volumeID, err := s.forHandle(req.VolumeId)
+	if err != nil {
+		return nil, err
+	}
+
 	log := s.log.WithFields(logrus.Fields{
 		"volume_id":              req.VolumeId,
 		"volume_capabilities":    req.VolumeCapabilities,
@@ -453,7 +539,7 @@ func (s *Service) ValidateVolumeCapabilities(ctx context.Context, req *csi.Valid
 	})
 	log.Infof("%s is capabilities called", methodName)
 
-	exist, err := util.ResourceIsExist(ctx, s.cloud.Volumes.Get, req.VolumeId)
+	exist, err := util.ResourceIsExist(ctx, s.cloud.Volumes.Get, volumeID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: get volume failed with error %s", methodName, err.Error())
 	}
@@ -493,6 +579,10 @@ func (s *Service) ControllerGetVolume(ctx context.Context, req *csi.ControllerGe
 	if volumeID == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "%s: VolumeID not provided", methodName)
 	}
+	s, volumeID, err := s.forHandle(volumeID)
+	if err != nil {
+		return nil, err
+	}
 
 	volume, resp, err := s.cloud.Volumes.Get(ctx, volumeID)
 	if err != nil {
@@ -504,7 +594,7 @@ func (s *Service) ControllerGetVolume(ctx context.Context, req *csi.ControllerGe
 
 	entry := csi.ControllerGetVolumeResponse{
 		Volume: &csi.Volume{
-			VolumeId:      volumeID,
+			VolumeId:      req.GetVolumeId(),
 			CapacityBytes: int64(volume.Size * giB),
 		},
 	}
@@ -523,6 +613,10 @@ func (s *Service) ControllerExpandVolume(ctx context.Context, req *csi.Controlle
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "VolumeID not provided")
+	}
+	s, volumeID, err := s.forHandle(volumeID)
+	if err != nil {
+		return nil, err
 	}
 
 	capacityRange := req.GetCapacityRange()
