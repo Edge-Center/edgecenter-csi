@@ -77,3 +77,7 @@ This project can be built like any other go application.
 go get -u github.com/Edge-Center/edgecenter-csi
 ```
 
+## License
+
+This project is licensed under the Apache License 2.0, see [LICENSE](LICENSE).
+Copyright (c) 2025 LLC "EDGECENTER"
